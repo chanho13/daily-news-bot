@@ -5,40 +5,67 @@ import google.generativeai as genai
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# 깃허브 금고에서 정보 가져오기
+# 1. 깃허브 금고에서 정보 가져오기
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
-# ⭐️ 메일을 받을 주소 (네이버, 다음 등 평소 확인하시는 메일 주소로 수정하세요!)
+# 2. 메일 수신자 설정
 RECEIVER_EMAIL = "ho@kca.kr" 
 
-# Gemini AI 설정
+# 3. Gemini AI 설정
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# ⭐️ 검색할 키워드 세팅 
+# 4. 검색할 키워드 세팅 
 KEYWORDS = ["6G", "5G", "spectrum", "fcc", "ofcom", "주파수", "전파"]
 
-def fetch_news(keyword):
-    url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
-    feed = feedparser.parse(url)
-    return feed.entries[:3] 
+def fetch_news():
+    """구글 뉴스에서 키워드별로 최근 24시간 기사를 수집하고 중복을 제거합니다."""
+    unique_news = {}
+    for keyword in KEYWORDS:
+        # 💡 핵심: 검색어 뒤에 '+when:1d'를 추가하여 전날(24시간 이내) 기사만 필터링
+        url = f"https://news.google.com/rss/search?q={keyword}+when:1d&hl=ko&gl=KR&ceid=KR:ko"
+        feed = feedparser.parse(url)
+        for entry in feed.entries[:5]: # 국가별 분류를 위해 기사를 넉넉히 수집
+            unique_news[entry.link] = entry.title
+    return unique_news
 
-def summarize_news(news_list, keyword):
-    prompt = f"다음은 '{keyword}' 관련 최신 뉴스 제목과 링크들입니다. 이 이슈들의 핵심 내용을 3~4문장으로 깔끔하게 요약해주세요.\n\n"
-    for news in news_list:
-        prompt += f"- 제목: {news.title}\n- 링크: {news.link}\n"
+def categorize_and_summarize(news_dict):
+    """수집된 뉴스를 AI에 전달하여 5개 국가별 요약 리포트를 생성합니다."""
+    prompt = """당신은 전파/통신 정책 전문가를 위한 뉴스 요약 어시스턴트입니다.
+    아래 수집된 최신 뉴스들을 [한국, 미국, 일본, 중국, 영국] 5개 국가별로 엄격하게 분류해서 요약해 주세요.
+
+    [요구사항]
+    1. 반드시 '한국, 미국, 일본, 중국, 영국' 5개 국가를 각각 대제목(<h3>)으로 작성하세요.
+    2. 각 국가별로 관련된 뉴스가 있다면 핵심 내용을 3~4문장으로 요약(<p>)하고, 그 아래에 참고한 기사의 제목과 링크를 리스트(<ul><li><a href="링크">제목</a></li></ul>)로 첨부하세요.
+    3. 해당 국가와 관련된 뉴스가 전혀 없다면, 국가 제목 아래에 "<p>최근 24시간 내 주요 이슈 없음</p>"이라고만 작성하세요.
+    4. 위 5개 국가에 속하지 않는 뉴스나 관련 없는 내용은 제외하세요.
+    5. 결과물은 반드시 이메일 본문에 바로 쓸 수 있는 HTML 코드로만 출력하세요. (```html 같은 마크다운 기호는 절대 쓰지 마세요)
+
+    [수집된 뉴스 목록]\n"""
+    
+    for link, title in news_dict.items():
+        prompt += f"- 제목: {title} (링크: {link})\n"
+
     response = model.generate_content(prompt)
-    return response.text
+    
+    # AI가 혹시라도 마크다운 기호를 붙였을 경우 깔끔하게 제거
+    html_content = response.text.replace("```html", "").replace("```", "").strip()
+    return html_content
 
 def send_email(content):
+    """생성된 HTML 내용을 이메일로 발송합니다."""
     msg = MIMEMultipart()
-    msg['Subject'] = "📰 오늘의 주요 이슈 요약 리포트"
+    # 이메일 제목도 전문적으로 수정했습니다.
+    msg['Subject'] = "📰 글로벌 전파/통신 일일 동향 리포트 (한국/미국/일본/중국/영국)"
     msg['From'] = SENDER_EMAIL
     msg['To'] = RECEIVER_EMAIL
 
-    body = MIMEText(content, 'html')
+    # 전체 메일 뼈대 조립
+    full_html = f"<h2>오늘의 글로벌 주요 이슈 (최근 24시간)</h2><hr>{content}"
+    
+    body = MIMEText(full_html, 'html')
     msg.attach(body)
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -46,16 +73,15 @@ def send_email(content):
         server.send_message(msg)
 
 if __name__ == "__main__":
-    email_body = "<h2>오늘의 트렌드 요약</h2><hr>"
-    for keyword in KEYWORDS:
-        news_items = fetch_news(keyword)
-        if news_items:
-            summary = summarize_news(news_items, keyword)
-            email_body += f"<h3>🔍 {keyword}</h3>"
-            email_body += f"<p>{summary.replace(chr(10), '<br>')}</p>"
-            email_body += "<ul>"
-            for item in news_items:
-                 email_body += f"<li><a href='{item.link}'>{item.title}</a></li>"
-            email_body += "</ul><br>"
-    send_email(email_body)
-    print("이메일 발송 완료!")
+    print("뉴스 수집 중...")
+    news_data = fetch_news()
+    
+    if news_data:
+        print(f"총 {len(news_data)}개의 기사 수집 완료. AI 국가별 요약 중...")
+        summary_html = categorize_and_summarize(news_data)
+        
+        print("이메일 발송 중...")
+        send_email(summary_html)
+        print("이메일 발송 완료!")
+    else:
+        print("최근 24시간 내 수집된 뉴스가 없습니다.")
