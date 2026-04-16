@@ -11,7 +11,7 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
 # 2. 메일 수신자 설정
-RECEIVER_EMAIL = "ho@kca.kr" 
+RECEIVER_EMAIL = "ho@kca.kr", "cpryul68@kca.kr"
 
 # 3. Gemini AI 설정 (최신 SDK 방식)
 client = genai.Client(api_key=GEMINI_API_KEY)
