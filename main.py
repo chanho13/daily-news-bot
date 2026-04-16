@@ -1,7 +1,7 @@
 import feedparser
 import smtplib
 import os
-import google.generativeai as genai
+from google import genai
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -13,9 +13,8 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD")
 # 2. 메일 수신자 설정
 RECEIVER_EMAIL = "ho@kca.kr" 
 
-# 3. Gemini AI 설정
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# 3. Gemini AI 설정 (최신 SDK 방식)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # 4. 검색할 키워드 세팅 
 KEYWORDS = ["6G", "5G", "spectrum", "fcc", "ofcom", "주파수", "전파"]
@@ -24,10 +23,9 @@ def fetch_news():
     """구글 뉴스에서 키워드별로 최근 24시간 기사를 수집하고 중복을 제거합니다."""
     unique_news = {}
     for keyword in KEYWORDS:
-        # 💡 핵심: 검색어 뒤에 '+when:1d'를 추가하여 전날(24시간 이내) 기사만 필터링
         url = f"https://news.google.com/rss/search?q={keyword}+when:1d&hl=ko&gl=KR&ceid=KR:ko"
         feed = feedparser.parse(url)
-        for entry in feed.entries[:5]: # 국가별 분류를 위해 기사를 넉넉히 수집
+        for entry in feed.entries[:5]: 
             unique_news[entry.link] = entry.title
     return unique_news
 
@@ -48,21 +46,22 @@ def categorize_and_summarize(news_dict):
     for link, title in news_dict.items():
         prompt += f"- 제목: {title} (링크: {link})\n"
 
-    response = model.generate_content(prompt)
+    # 최신 모델(gemini-2.5-flash) 적용
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt
+    )
     
-    # AI가 혹시라도 마크다운 기호를 붙였을 경우 깔끔하게 제거
     html_content = response.text.replace("```html", "").replace("```", "").strip()
     return html_content
 
 def send_email(content):
     """생성된 HTML 내용을 이메일로 발송합니다."""
     msg = MIMEMultipart()
-    # 이메일 제목도 전문적으로 수정했습니다.
     msg['Subject'] = "📰 글로벌 전파/통신 일일 동향 리포트 (한국/미국/일본/중국/영국)"
     msg['From'] = SENDER_EMAIL
     msg['To'] = RECEIVER_EMAIL
 
-    # 전체 메일 뼈대 조립
     full_html = f"<h2>오늘의 글로벌 주요 이슈 (최근 24시간)</h2><hr>{content}"
     
     body = MIMEText(full_html, 'html')
