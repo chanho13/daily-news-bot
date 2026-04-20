@@ -3,7 +3,7 @@ name: Daily News Summarizer
 on:
   schedule:
     # 한국 시간 아침 9시 (UTC 0시) 설정
-    - cron: '0 0 * * *'
+    - cron: '30 23 * * *'
   workflow_dispatch: 
 
 jobs:
